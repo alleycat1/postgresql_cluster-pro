@@ -1,0 +1,24 @@
+---
+
+- name: Restart ntp service
+  ansible.builtin.systemd:
+    name: ntp
+    enabled: true
+    state: restarted
+  listen: "restart ntp"
+
+- name: Restart ntpd service
+  ansible.builtin.systemd:
+    name: ntpd
+    enabled: true
+    state: restarted
+  listen: "restart ntpd"
+
+- name: Restart chronyd service
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: restarted
+  listen: "restart chronyd"
+
+...

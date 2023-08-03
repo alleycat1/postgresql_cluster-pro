@@ -1,0 +1,30 @@
+---
+
+- block:
+
+    - name: Download the installation script "kickstart.sh"
+      ansible.builtin.get_url:
+        url: https://my-netdata.io/kickstart.sh
+        dest: /tmp/kickstart.sh
+        mode: +x
+
+    - name: Install Netdata
+      ansible.builtin.command: /tmp/kickstart.sh {{ netdata_install_options | default('--dont-wait') }}
+
+    - name: Configure Netdata
+      ansible.builtin.template:
+        src: templates/netdata.conf.j2
+        dest: /etc/netdata/netdata.conf
+        owner: root
+        group: root
+        mode: u=wrx,g=rx,o=r,+x
+
+    - name: Restart Netdata
+      ansible.builtin.service:
+        name: netdata
+        state: restarted
+
+  environment: "{{ proxy_env | default({}) }}"
+  tags: netdata
+
+...

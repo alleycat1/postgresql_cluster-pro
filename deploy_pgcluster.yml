@@ -1,0 +1,266 @@
+---
+
+- name: Deploy PostgreSQL HA Cluster (based on "Patroni" and "{{ dcs_type }}")
+  hosts: all
+  become: true
+  become_method: sudo
+  gather_facts: true
+  tags: always
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+    - vars/system.yml
+  environment: "{{ proxy_env | default({}) }}"
+
+  pre_tasks:
+    - name: Include OS-specific variables
+      ansible.builtin.include_vars: "vars/{{ ansible_os_family }}.yml"
+      tags: always
+
+    - name: System information
+      ansible.builtin.debug:
+        var: system_info
+      vars:
+        system_info:
+          OS: "{{ ansible_distribution | default('N/A') }} {{ ansible_distribution_version | default('N/A') }}"
+          Kernel: "{{ ansible_kernel | default('N/A') }}"
+          CPU model: >-
+            {{ ansible_processor[2] | default('N/A') }},
+            count: {{ ansible_processor_count | default('N/A') }},
+            cores: {{ ansible_processor_cores | default('N/A') }}
+          Memory: "{{ (ansible_memtotal_mb / 1024) | round(2) if ansible_memtotal_mb is defined else 'N/A' }} GB"
+          Disk space total: >-
+            {{
+              (ansible_mounts
+                | map(attribute='size_total')
+                | map('int')
+                | sum / 1024 / 1024 / 1024
+              )
+              | round(2) if ansible_mounts is defined else 'N/A'
+            }} GB
+          Architecture: "{{ ansible_architecture | default('N/A') }}"
+          Virtualization type: "{{ ansible_virtualization_type | default('N/A') }}"
+          Product name: "{{ ansible_product_name | default('N/A') }}"
+      tags: always
+
+  roles:
+    - role: pre-checks
+      vars:
+        minimal_ansible_version: 2.11.0
+        timescale_minimal_pg_version: 12 # if enable_timescale is defined
+      tags: always
+
+  tasks:
+    - name: Clean yum cache
+      ansible.builtin.command: yum clean all
+      when:
+        - ansible_os_family == "RedHat"
+        - ansible_distribution_major_version == '7'
+
+    - name: Clean dnf cache
+      ansible.builtin.command: dnf clean all
+      when:
+        - ansible_os_family == "RedHat"
+        - ansible_distribution_major_version is version('8', '>=')
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      register: apt_status
+      until: apt_status is success
+      delay: 5
+      retries: 3
+      when: ansible_os_family == "Debian"
+
+    - name: Make sure the gnupg and apt-transport-https packages are present
+      ansible.builtin.apt:
+        pkg:
+          - gnupg
+          - apt-transport-https
+        state: present
+      register: apt_status
+      until: apt_status is success
+      delay: 5
+      retries: 3
+      when: ansible_os_family == "Debian"
+
+    # Ansible requires the iproute package for network facts to be populated
+    - name: Make sure that the iproute is installed
+      ansible.builtin.package:
+        name: iproute
+        state: present
+      register: package_status
+      until: package_status is success
+      delay: 5
+      retries: 3
+      when: ansible_os_family == "RedHat"
+
+    - name: Make sure that the iproute is installed
+      ansible.builtin.apt:
+        name: iproute2
+        state: present
+      register: apt_status
+      until: apt_status is success
+      delay: 5
+      retries: 3
+      when: ansible_os_family == "Debian"
+
+- name: deploy_pgcluster.yml | Deploy etcd cluster
+  ansible.builtin.import_playbook: etcd_cluster.yml
+  when: not dcs_exists|bool and dcs_type == "etcd"
+  tags: etcd
+
+- name: deploy_pgcluster.yml | Deploy Consul
+  ansible.builtin.import_playbook: consul.yml
+  when: dcs_type == "consul"
+  tags: consul
+
+- name: deploy_pgcluster.yml | Postgres Cluster Configuration
+  hosts: postgres_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+    - vars/system.yml
+
+  pre_tasks:
+    - name: Include OS-specific variables
+      ansible.builtin.include_vars: "vars/{{ ansible_os_family }}.yml"
+      tags: always
+
+    - name: Checking Linux distribution
+      ansible.builtin.fail:
+        msg: "{{ ansible_distribution }} is not supported"
+      when: ansible_distribution not in os_valid_distributions
+
+    - name: Checking version of OS Linux
+      ansible.builtin.fail:
+        msg: "{{ ansible_distribution_version }} of {{ ansible_distribution }} is not supported"
+      when: ansible_distribution_version is version_compare(os_minimum_versions[ansible_distribution], '<')
+
+    - name: Build a firewall_ports_dynamic_var
+      ansible.builtin.set_fact:
+        firewall_ports_dynamic_var: "{{ firewall_ports_dynamic_var | default([]) + (firewall_allowed_tcp_ports_for[item] | default([])) }}"
+      loop: "{{ hostvars[inventory_hostname].group_names }}"
+      when: firewall_enabled_at_boot | bool
+      tags: firewall
+
+    - name: Build a firewall_rules_dynamic_var
+      ansible.builtin.set_fact:
+        firewall_rules_dynamic_var: "{{ firewall_rules_dynamic_var | default([]) + (firewall_additional_rules_for[item] | default([])) }}"
+      loop: "{{ hostvars[inventory_hostname].group_names }}"
+      when: firewall_enabled_at_boot | bool
+      tags: firewall
+
+  roles:
+    - role: ansible-role-firewall
+      environment: "{{ proxy_env | default({}) }}"
+      vars:
+        firewall_allowed_tcp_ports: "{{ firewall_ports_dynamic_var | default([]) | unique }}"
+        firewall_additional_rules: "{{ firewall_rules_dynamic_var | default([]) | unique }}"
+      when: firewall_enabled_at_boot|bool
+      tags: firewall
+
+    - role: hostname
+    - role: resolv_conf
+    - role: etc_hosts
+    - role: add-repository
+    - role: packages
+    - role: sudo
+    - role: swap
+    - role: sysctl
+    - role: transparent_huge_pages
+    - role: pam_limits
+    - role: io-scheduler
+    - role: locales
+    - role: timezone
+    - role: ntp
+    - role: ssh-keys
+    - role: copy
+
+- name: deploy_pgcluster.yml | Deploy balancers
+  ansible.builtin.import_playbook: balancers.yml
+  when: with_haproxy_load_balancing|bool
+  tags: load_balancing, haproxy
+
+- name: deploy_pgcluster.yml | Install and configure pgBackRest
+  hosts: pgbackrest:postgres_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+  pre_tasks:
+    - name: Include OS-specific variables
+      ansible.builtin.include_vars: "vars/{{ ansible_os_family }}.yml"
+      tags: always
+
+  roles:
+    - role: pgbackrest
+      when: pgbackrest_install|bool
+
+- name: deploy_pgcluster.yml | PostgreSQL Cluster Deployment
+  hosts: postgres_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  handlers:
+    - ansible.builtin.import_tasks: roles/pgbouncer/handlers/main.yml
+  vars_files:
+    - vars/main.yml
+    - vars/system.yml
+
+  pre_tasks:
+    - name: Include OS-specific variables
+      ansible.builtin.include_vars: "vars/{{ ansible_os_family }}.yml"
+      tags: always
+
+  roles:
+    - role: wal-g
+      when: wal_g_install|bool
+
+    - role: pg_probackup
+      when: pg_probackup_install|bool
+
+    - role: cron
+
+    - role: pgbouncer
+      when: pgbouncer_install|bool
+
+    - role: pgpass
+
+    - role: patroni
+
+    - role: pgbackrest/stanza-create
+      when: pgbackrest_install|bool
+
+    - role: vip-manager
+      when: not with_haproxy_load_balancing|bool and
+        (cluster_vip is defined and cluster_vip | length > 0)
+
+    # optional
+    - role: postgresql-users
+      when: is_master | bool and postgresql_users | length > 0
+
+    - role: postgresql-databases
+      when: is_master | bool and postgresql_databases | length > 0
+
+    - role: postgresql-schemas
+      when: is_master | bool and postgresql_schemas | length > 0
+
+    - role: postgresql-extensions
+      when: is_master | bool and postgresql_extensions | length > 0
+
+    - role: pgbouncer/config
+      when: pgbouncer_install|bool
+
+    - role: netdata
+      when: netdata_install is defined and netdata_install|bool
+
+    # finish (info)
+    - role: deploy-finish

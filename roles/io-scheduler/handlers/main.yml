@@ -1,0 +1,11 @@
+---
+
+- name: Start io-scheduler service
+  ansible.builtin.systemd:
+    daemon_reload: true
+    name: io-scheduler
+    state: restarted
+    enabled: true
+  listen: "restart io-scheduler"
+
+...

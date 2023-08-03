@@ -1,0 +1,32 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Set variables for molecule
+      ansible.builtin.set_fact:
+        firewall_enable_ipv6: false # Added to prevent test failures in CI.
+        swap_file_create: false # Added to prevent test failures in CI.
+        sysctl_set: false # Added to prevent test failures in CI.
+        nameservers: ["8.8.8.8", "9.9.9.9"]
+        with_haproxy_load_balancing: true
+        cacheable: true
+
+    - name: Prepare | Clean yum cache
+      ansible.builtin.command: yum clean all
+      when:
+        - ansible_os_family == "RedHat"
+        - ansible_distribution_major_version == '7'
+
+    - name: Prepare | Clean dnf cache
+      ansible.builtin.command: dnf clean all
+      when:
+        - ansible_os_family == "RedHat"
+        - ansible_distribution_major_version is version('8', '>=')
+
+    - name: Include postgrespro vars
+      ansible.builtin.include_vars: vars/postgrespro_vars.yml
+
+- name: Deploy PostgreSQL Cluster
+  ansible.builtin.import_playbook: ../../deploy_pgcluster.yml

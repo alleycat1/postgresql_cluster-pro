@@ -1,0 +1,71 @@
+---
+- name: Ensure config directory "{{ pgbouncer_conf_dir }}" exist
+  ansible.builtin.file:
+    path: "{{ pgbouncer_conf_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+  tags: pgbouncer, pgbouncer_conf
+
+- name: Update pgbouncer.ini
+  ansible.builtin.template:
+    src: ../templates/pgbouncer.ini.j2
+    dest: "{{ pgbouncer_conf_dir }}/pgbouncer.ini"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: "restart pgbouncer"
+  when: existing_pgcluster is not defined or not existing_pgcluster|bool
+  tags: pgbouncer, pgbouncer_conf
+
+# if pgbouncer_auth_user is 'false'
+- block:
+    - name: Get users and password md5 from pg_shadow
+      run_once: true
+      become: true
+      become_user: postgres
+      ansible.builtin.command: >
+        {{ postgresql_bin_dir }}/psql -p {{ postgresql_port }} -U {{ patroni_superuser_username }} -d postgres -Atq
+        -c "SELECT concat('\"', usename, '\" \"', passwd, '\"') FROM pg_shadow where usename != '{{ patroni_replication_username }}'"
+      register: pg_shadow_result
+      changed_when: false
+      delegate_to: "{{ groups.master[0] }}"
+
+    - name: "Generate {{ pgbouncer_conf_dir }}/userlist.txt"
+      become: true
+      become_user: postgres
+      ansible.builtin.copy:
+        content: |
+          {{ pg_shadow_result.stdout }}
+        dest: "{{ pgbouncer_conf_dir }}/userlist.txt"
+      notify: "reload pgbouncer"
+      when:
+        - pg_shadow_result.rc == 0
+        - pg_shadow_result.stdout is defined
+        - pg_shadow_result.stdout | length > 0
+  when: not pgbouncer_auth_user|bool
+  tags: pgbouncer, pgbouncer_conf, pgbouncer_generate_userlist
+
+# if pgbouncer_auth_user is 'true'
+- name: "Create function 'user_search' for pgbouncer 'auth_query' option in all databases"
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: |
+    for db in $({{ postgresql_bin_dir }}/psql -p {{ postgresql_port }} -U {{ patroni_superuser_username }} -tAXc \
+    "select datname from pg_catalog.pg_database where datname <> 'template0'"); do
+      {{ postgresql_bin_dir }}/psql -p {{ postgresql_port }} -U {{ patroni_superuser_username }} -d "$db" -tAXc '
+        CREATE OR REPLACE FUNCTION user_search(uname TEXT) RETURNS TABLE (usename name, passwd text) AS
+        $$
+        SELECT usename, passwd FROM pg_shadow WHERE usename=$1;
+        $$
+        LANGUAGE sql SECURITY DEFINER;
+        REVOKE ALL ON FUNCTION user_search(uname TEXT) FROM public;
+        GRANT EXECUTE ON FUNCTION user_search(uname TEXT) TO {{ pgbouncer_auth_username }};
+      '; done
+  args:
+    executable: /bin/bash
+  when: pgbouncer_auth_user|bool and is_master|bool
+  tags: pgbouncer, pgbouncer_conf, pgbouncer_auth_query
+
+...

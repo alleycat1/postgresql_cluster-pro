@@ -1,0 +1,106 @@
+
+## Available tags
+
+- add_repo
+- - install_epel_repo
+- - install_postgresql_repo
+- - install_scl_repo
+- install_packages
+- - install_postgres
+- - install_packages_from_file
+- sudo
+- firewall
+- hostname
+- dns, nameservers
+- etc_hosts
+- swap
+- - swap_create
+- - swap_remove
+- sysctl, kernel
+- disable_thp
+- limits
+- scheduler
+- locales
+- timezone
+- ntp
+- - ntp_install
+- - ntp_conf
+- ssh_keys
+- fetch_files
+- copy_files
+- etcd
+- - etcd_install
+- - etcd_conf
+- - etcd_start
+- - etcd_status
+- consul
+- pgpass
+- patroni
+- - pip
+- - patroni_install
+- - patroni_conf
+- - - patroni_service
+- - pgsql_stats_tmp
+- - pg_hba, pg_hba_generate
+- - patroni_start_master
+- - patroni_start_replica
+- - postgresql_disable
+- - custom_wal_dir
+- - point_in_time_recovery
+- pgbouncer
+- - pgbouncer_install
+- - pgbouncer_conf
+- - pgbouncer_service
+- - pgbouncer_logrotate
+- - pgbouncer_restart
+- - pgbouncer_generate_userlist
+- - pgbouncer_auth_query
+- load_balancing
+- - haproxy
+- - - haproxy_requirements
+- - - haproxy_conf
+- - - haproxy_selinux
+- - confd
+- - - get_confd
+- - - confd_conf
+- - - - confd_toml
+- - - - haproxy_toml
+- - - - haproxy_tmpl
+- - - confd_service
+- - - confd_restart
+- - keepalived
+- - - keepalived_install
+- - - keepalived_conf
+- - - keepalived_selinux
+- - - keepalived_restart
+- vip_manager
+- - vip_manager_install
+- - vip_manager_conf
+- - vip_manager_service
+- - vip_manager_restart
+- postgresql_users
+- postgresql_databases
+- postgresql_schemas
+- postgresql_extensions
+- cluster_info
+- - patroni_status
+- - databases, db_list
+- - conn_info
+- - vip_owner
+- - vip_status
+- wal_g
+- - wal_g_install
+- - wal_g_conf
+- - wal_g_cron
+- pgbackrest
+- - pgbackrest_repo
+- - pgbackrest_install
+- - pgbackrest_conf
+- - pgbackrest_ssh_keys
+- - pgbackrest_stanza_create
+- - pgbackrest_cron
+- pg_probackup
+- - pg_probackup_repo
+- - pg_probackup_install
+- cron
+- netdata

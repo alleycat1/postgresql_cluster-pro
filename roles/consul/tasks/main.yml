@@ -1,0 +1,83 @@
+---
+# File: main.yml - Main tasks for Consul
+- name: Looking up latest version of Consul
+  ansible.builtin.set_fact:
+    consul_version: "{{ (lookup('url', 'https://api.github.com/repos/hashicorp/consul/releases/latest', split_lines=False) |
+                    from_json).get('tag_name') | replace('v', '') }}"
+  when: 'consul_version == "latest"'
+
+- name: Install python dependencies
+  when:
+    - consul_install_dependencies | bool
+  block:
+    - name: Make sure the python3-pip package are present on controlling host
+      ansible.builtin.package:
+        name: python3-pip
+        state: present
+      register: package_status
+      until: package_status is success
+      delay: 5
+      retries: 3
+      delegate_to: 127.0.0.1
+      run_once: true
+      ignore_errors: true
+      when: not is_virtualenv or is_virtualenv == None
+
+    - name: Install netaddr dependency on controlling host (with --user)
+      ansible.builtin.pip:
+        name: netaddr
+        extra_args: --user
+      delegate_to: 127.0.0.1
+      become: false
+      vars:
+        ansible_become: false
+      run_once: true
+      when: not is_virtualenv or is_virtualenv == None
+
+    - name: Install netaddr dependency on controlling host (virtualenv)
+      ansible.builtin.pip:
+        name: netaddr
+      delegate_to: 127.0.0.1
+      become: false
+      vars:
+        ansible_become: false
+      run_once: true
+      when: is_virtualenv is defined
+
+- name: Include checks/asserts
+  ansible.builtin.import_tasks: asserts.yml
+
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ vars_file_item }}"
+  with_first_found:
+    - files:
+        - '{{ ansible_os_family }}-{{ ansible_distribution_major_version }}.yml'
+        - "{{ ansible_os_family }}.yml"
+  loop_control:
+    loop_var: vars_file_item
+  tags: always
+
+# -----------------------------------------------------------------------
+# Tasks for all *NIX operating systems
+# -----------------------------------------------------------------------
+- name: Include NIX tasks
+  ansible.builtin.include_tasks: nix.yml
+  when: ansible_os_family != 'Windows'
+
+# -----------------------------------------------------------------------
+# Tasks for Windows
+# -----------------------------------------------------------------------
+- name: Include Windows tasks
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == 'Windows'
+
+- name: Include services management
+  ansible.builtin.import_tasks: services.yml
+  when:
+    - consul_services is defined and consul_services|length>0
+    - inventory_hostname in groups['postgres_cluster']
+  tags:
+    - consul_services
+
+- name: flush_handlers
+  ansible.builtin.meta: flush_handlers
